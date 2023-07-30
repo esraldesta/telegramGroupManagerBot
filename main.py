@@ -1,37 +1,9 @@
 from datetime import datetime, timedelta
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Dispatcher, Defaults, CallbackQueryHandler, ChatJoinRequestHandler, PreCheckoutQueryHandler
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot, LabeledPrice
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Dispatcher, Defaults, CallbackQueryHandler, ChatJoinRequestHandler, PreCheckoutQueryHandler,ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot, LabeledPrice,Update
 
 from constants import *
-
-from models import group, user, transaction, membership
-
-bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot, None, use_context=True)
-
-
-def waiting_message_wrapper(func):
-    def wrapper(update, context):
-        msg = context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text='Please wait...',
-        )
-        error = None
-        print('calling function')
-        try:
-            func(update, context)
-        except Exception as e:
-            error = e
-            print(e)
-        context.bot.delete_message(
-            chat_id=update.effective_chat.id,
-            message_id=msg.message_id,
-        )
-        if error:
-            raise error
-
-    return wrapper
-
+from models import group,user,transaction,membership
 
 def verify_payment(update, context):
     cmd = update.message.text.split(' ')[1]
@@ -68,31 +40,7 @@ def verify_payment(update, context):
     return
 
 
-def chat_join_request(update, context):
-    bot = context.bot
-    query = update.chat_join_request
-    user_detail = user.get_user(query.from_user.id)
-    if not user_detail:
-        tg_user = query.from_user
-        user.create_user(
-            tg_user.id, tg_user.first_name, tg_user.last_name, tg_user.username
-        )
-
-    group_detail = group.get_group(query.chat.id)
-
-    have_valid_membership = membership.check_valid_membership(
-        user_detail, group_detail)
-    if have_valid_membership:
-        bot.approve_chat_join_request(query.chat.id, query.from_user.id)
-        return
-
-    bot.decline_chat_join_request(query.chat.id, query.from_user.id)
-    print('declined')
-    return
-
-
-@waiting_message_wrapper
-def start(update, context):
+def start(update:Update,context:ContextTypes):
     cmd = update.message.text.split(' ')
     if len(cmd) > 1:
         return verify_payment(update, context)
@@ -112,8 +60,6 @@ def start(update, context):
     text = WELCOME_MESSAGE.format(user=update.message.from_user.first_name)
     update.message.reply_text(text, reply_markup=reply_markup)
 
-
-@waiting_message_wrapper
 def select_group(update, context):
     query = update.callback_query
     query.answer()
@@ -135,7 +81,6 @@ def select_group(update, context):
     query.edit_message_text(text=text, reply_markup=reply_markup)
 
 
-@waiting_message_wrapper
 def select_payment_method(update, context):
     query = update.callback_query
     query.answer()
@@ -145,6 +90,9 @@ def select_payment_method(update, context):
         query.edit_message_text(text='Group not found')
         return
     bot_username = context.bot.username
+    print("context.bot",context.bot)
+    print("context.user_data",context.user_data)
+    
     payment_method = query.data.split('_')[1]
     user_detail = user.get_user(update.effective_user.id)
     txt = transaction.create_transaction(
@@ -196,6 +144,29 @@ def select_payment_method(update, context):
         )
 
 
+def chat_join_request(update, context):
+    print("hi")
+    bot = context.bot
+    query = update.chat_join_request
+    user_detail = user.get_user(query.from_user.id)
+    if not user_detail:
+        tg_user = query.from_user
+        user.create_user(
+            tg_user.id, tg_user.first_name, tg_user.last_name, tg_user.username
+        )
+    query.accept()
+    print("accepted")
+    group_detail = group.get_group(query.chat.id)
+
+    have_valid_membership = membership.check_valid_membership(
+        user_detail, group_detail)
+    if have_valid_membership:
+        bot.approve_chat_join_request(query.chat.id, query.from_user.id)
+        return
+
+    bot.decline_chat_join_request(query.chat.id, query.from_user.id)
+    print('declined')
+    return
 def precheckout_callback(update, context):
     """Answers the PreQecheckoutQuery"""
     query = update.pre_checkout_query
@@ -206,7 +177,6 @@ def precheckout_callback(update, context):
         query.answer(ok=False, error_message="Something went wrong...")
     else:
         query.answer(ok=True)
-
 
 def successful_payment_callback(update, context):
     print(update, context)
@@ -231,30 +201,24 @@ def successful_payment_callback(update, context):
         reply_markup=reply_markup,
     )
 
-
 def main():
-    updater = Updater(TOKEN, use_context=True)
+    print("started")
+    updater = Updater(TOKEN,use_context=True)
     dispatcher = updater.dispatcher
 
-    # register handlers
-    dispatcher.add_handler(CommandHandler('start', start))
-    # handle callback for group + _ + group_id
-    dispatcher.add_handler(CallbackQueryHandler(
-        select_group, pattern='^group_-?[0-9]+$'))
-    dispatcher.add_handler(CallbackQueryHandler(
-        select_payment_method, pattern='^payment_.+$'))
-
-    # chat join request handler
-    dispatcher.add_handler(
-        ChatJoinRequestHandler(callback=chat_join_request, pass_chat_data=True))
+    #HANDLERS
+    dispatcher.add_handler(CommandHandler("start",start))
+    dispatcher.add_handler(CallbackQueryHandler(select_group, pattern='^group_-?[0-9]+$'))
+    dispatcher.add_handler(CallbackQueryHandler(select_payment_method, pattern='^payment_.+$'))
+    
+    dispatcher.add_handler(ChatJoinRequestHandler(callback=chat_join_request, pass_chat_data=True))
 
     dispatcher.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     dispatcher.add_handler(MessageHandler(
         Filters.successful_payment, successful_payment_callback))
-
+    
     updater.start_polling()
     updater.idle()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
